@@ -196,6 +196,8 @@ classdef NDFLayers < matlab.mixin.Copyable
             %need to do prediction first
             layer.yid  =  layer.LabelMapping(derr);           
             layer.p_norm = sum(layer.next_in,2)./ hist(layer.yid, 1:length(layer.label_list))';
+            layer.p_norm = layer.p_norm/sum(layer.p_norm);
+            %layer.p_norm = mean(layer.next_in,2);
         end
                 
         function variance = ForestVariance(layer)
@@ -206,7 +208,7 @@ classdef NDFLayers < matlab.mixin.Copyable
             
         function loss = EmbeddingLoss(layer)
             %loss = -sum((layer.next_in).^2,1);
-            loss = -sum((bsxfun(@rdivide,(layer.next_in).^2,layer.p_norm)),1);
+            loss = -sum((bsxfun(@rdivide,(layer.next_in).^2, layer.p_norm)),1);
         end
         
         function loss = EmbeddingLossPartial(layer)

@@ -1,13 +1,15 @@
 function acc_test = TransferNeuralTreesZSLmixtest(data,prev_model)
+    addpath novelty_detection/
     %% General Initialization
-    split_method_list = {'cond','stack','thres'};
+    split_method_list = {'cond','thres','gaussian','loop','stack'};
     %seen.(data,data_label,attr,attr_label)
     %unseen.(data,data_label,attr,attr_label)
     data_dim            = size(data.Xs,1);    
     attr_dim            = size(data.Xl,1);
-    common_dim          = 300;
+    class_num           = length(data.Yl);
+    common_dim          = 100;
     %seen_out_dim        = length(seen_label_list); %only used when directly project S to T
-    thres_list     = [-10:1:-2,-1:0.05:0];   
+    thres_list     = [-1000,-100,-10:1:-2,-1.2:0.001:-1,-1:0.05:0];   
     
     %% New variables for clearity
     seen_label_list     = unique(data.Yl);
@@ -50,6 +52,7 @@ function acc_test = TransferNeuralTreesZSLmixtest(data,prev_model)
     fprintf('Source train acc = %d\n',acc(1));
     seen_classifier.RecordForestNorm(data.Ys);
     emloss_train = seen_classifier.EmbeddingLoss(); 
+    mapped_train_data = data_mapping.next_in; %record
     %seen_data = data_mapping.next_in; %record
     %data_cost = seen_data_path.final_cost;
   
@@ -58,6 +61,7 @@ function acc_test = TransferNeuralTreesZSLmixtest(data,prev_model)
     seen_attr_path.Train(data.Xl,data.Yl,struct('epoch_num',500,'updatestop_layer',1));       
     acc(2) = mean(seen_attr_path.Predict(data.Xl) == data.Yl);            
     fprintf('Target train acc = %d\n',acc(2));
+    mapped_seen_attr = attr_mapping.next_in; %record
     %seen_attr = attr_mapping.next_in;
     %attr_cost = seen_attr_path.final_cost;
             
@@ -88,7 +92,8 @@ function acc_test = TransferNeuralTreesZSLmixtest(data,prev_model)
     acc(5) = mean(predicted_unseen_Ysh(:,test_unseen_id ) == data.Ysh(:,test_unseen_id));                    
     fprintf('Source unseen test acc = %d\n',acc(5));    
     %unseen_data = data_mapping.next_in;
-
+    mapped_test_data = data_mapping.next_in; 
+    
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 % Test under different s/u thres
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%    
@@ -107,37 +112,57 @@ function acc_test = TransferNeuralTreesZSLmixtest(data,prev_model)
     emloss_test_unseen2 = emloss_test2(:,test_unseen_id);
 %}    
 
-    for split_id = 1:3
+    [mu, sigma, priors] = trainMultiVariantGaussianDiscriminant(mapped_train_data, data.Ys, mapped_seen_attr, data.Yl);
+    logprobabilities = predictMultiVariantGaussianDiscriminant(mapped_test_data, mu, sigma, priors);
+
+    lambda = 7;
+    kNN = 20;
+    loop_prob = calcOutlierPriors( mapped_test_data, mapped_train_data, data.Ys, data.Yl, lambda, kNN);
+
+    for split_id = 1:4
         split_method =  split_method_list{split_id};
         for thres_id = 1:length(thres_list)          
             thres =  thres_list(thres_id); 
             predicted_Ysh = predicted_seen_Ysh;        
             if(strcmp(split_method,'cond'))
-                p_seen = tanh(thres*emloss_test);
+                %p_seen = tanh(thres*emloss_test);
+                p_seen = 2./(1+exp(-thres*emloss_test/class_num ))-1;
                 [~,max_id] = max([bsxfun(@times,predicted_seen_prob,p_seen);bsxfun(@times,predicted_unseen_prob,(1-p_seen))],[],1);                     
                 unseen_predict_id = max_id>length(seen_classifier.label_list);
                 predicted_Ysh(:,unseen_predict_id) = predicted_unseen_Ysh(:, unseen_predict_id );
+                t_acc.soru_s(thres_id) = mean(p_seen(:,test_seen_id)>=0.5);
+                t_acc.soru_u(thres_id) = mean(p_seen(:,test_unseen_id)<0.5);
             elseif(strcmp(split_method,'stack'))
                 [~,max_id] = max([predicted_seen_prob+thres;predicted_unseen_prob],[],1);                     
                 unseen_predict_id = max_id>length(seen_classifier.label_list);
                 predicted_Ysh(:,unseen_predict_id) = predicted_unseen_Ysh(:, unseen_predict_id );
             elseif(strcmp(split_method,'thres'))
-                predicted_Ysh(:,emloss_test>thres) = predicted_unseen_Ysh(:,emloss_test>thres);                
+                predicted_Ysh(:,emloss_test>class_num*thres) = predicted_unseen_Ysh(:,emloss_test>class_num *thres);
+                t_acc.soru_s(thres_id) = mean(emloss_test(:,test_seen_id)<=class_num*thres);
+                t_acc.soru_u(thres_id) = mean(emloss_test(:,test_unseen_id)>class_num*thres);
+            elseif(strcmp(split_method,'gaussian'))
+                %max_seen_prob = max(predicted_seen_prob,[],1);                                     
+                predicted_Ysh(:,logprobabilities>3*thres) = predicted_unseen_Ysh(:,logprobabilities>3*thres);
+                %range -1 ~ -3
+                t_acc.soru_s(thres_id) = mean(logprobabilities(:,test_seen_id)<=3*thres);
+                t_acc.soru_u(thres_id) = mean(logprobabilities(:,test_unseen_id)>3*thres);
+            elseif(strcmp(split_method,'loop'))    
+                predicted_Ysh(:,loop_prob>= -thres) = predicted_unseen_Ysh(:,loop_prob>= -thres);                
+                t_acc.soru_s(thres_id) = mean(loop_prob(:,test_seen_id)< -thres);
+                t_acc.soru_u(thres_id) = mean(loop_prob(:,test_unseen_id)>= -thres);
             end
 
             t_acc.seen(thres_id) = mean(predicted_Ysh(:,test_seen_id) == data.Ysh(:,test_seen_id));        
             fprintf('Source seen test full class prediction acc = %d\n',t_acc.seen(thres_id));    
-            t_acc.soru_s(thres_id) = mean(p_seen(:,test_seen_id)>=0.5);
 
             t_acc.unseen(thres_id) = mean(predicted_Ysh(:,test_unseen_id) == data.Ysh(:,test_unseen_id));    
             fprintf('Source unseen test full class prediction acc = %d\n',t_acc.unseen(thres_id));    
-            t_acc.soru_u(thres_id) = mean(p_seen(:,test_unseen_id)<0.5);
 
             t_acc.all(thres_id) = mean(predicted_Ysh == data.Ysh);
         end
         t_acc_list{split_id} = t_acc;
     end
-    split_method_used = split_method_list(1:3);
+    split_method_used = split_method_list(1:4);
     %{
     figure(1);
     plot(thres_list,t_acc.unseen);

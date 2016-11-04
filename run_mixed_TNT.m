@@ -9,8 +9,8 @@ source = []; target_train = []; target_test = [];
 addpath('/home/chuna/Zeroshot/ES/Embarrassingly-simple-ZSL-master');
 acc_all = [];
 
-for k = 1
-    for i = 1
+for k = 1:3
+    for i = [1,3]
         dataset = dataset_list{i}; 
         data.dataset = dataset;    
         if(strcmp(dataset,'AWA'))
@@ -107,6 +107,6 @@ for k = 1
         data.Ylh = zero_category;
         data.Xsh = X_all(:,test_id);
         data.Ysh = Y_all(:,test_id);
+        acc_all(k,i) = TransferNeuralTreesZSLmixtest(data);     
     end
-    acc_all(k,i) = TransferNeuralTreesZSLmixtest(data);     
 end

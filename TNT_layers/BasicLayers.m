@@ -10,7 +10,7 @@ classdef BasicLayers <handle
 
         %cache parameter of updating
         in;
-        next_in;
+        next_in; %better to be modified to out
         grad;   
         
         G;
@@ -62,10 +62,16 @@ classdef BasicLayers <handle
              layer.next_in = next_in;
         end
         function prev_derr = Backward(layer,derr) %derr: derr/ds
+             %in --*w--> s --activate--> out
              in_num = size(derr,2);
-             %prev_derr = (layer.weights * derr).* layer.BasicNeuronDiff(layer.in);
+             %In common methemitical definition, we'll use derr/ds of next
+             %layer to calculate derr/ds in this layer, that is:
+             %prev_derr = (next_layer.weights * derr).* layer.BasicNeuronDiff(layer.next_in);
+             %However, this require w in next layer, which is not modulized             
+             %Thus, we first do the multiplication of w in this layer to get derr/din  == prev derr/dout of and
+             %pass backward
              prev_derr = (layer.weights * (derr.* layer.BasicNeuronDiff(layer.next_in)) ); 
-             %derr is prev derr/ds *w, before become derr/s in this layer, first multiply by theta' 
+             %derr is now next_derr/ds * next_w = derr/dout, to become derr/s in this layer, only need to multiply by dout/ds 
              layer.grad = (layer.in*(derr.* layer.BasicNeuronDiff(layer.next_in))')/in_num;
              prev_derr = prev_derr(1:end-1,:);
         end
